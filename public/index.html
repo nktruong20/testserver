@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>Candlestick Chart</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js" defer></script>
+  <link rel="icon" href="data:;base64,iVBORw0KGgo=" />
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    header{padding:14px 16px;border-bottom:1px solid #1f2937;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    input,button{border:1px solid #334155;background:#0b1220;color:#e2e8f0;padding:8px 10px;border-radius:8px}
+    .btn{cursor:pointer} .btn:hover{opacity:.9}
+    .spacer{flex:1}
+    #ranges{display:flex;gap:6px}
+    #ranges .btn{background:#0b1220;border-color:#334155}
+    #ranges .btn.active{background:#1e293b;border-color:#64748b}
+    #status{padding:10px 16px;font-size:13px;color:#94a3b8;border-bottom:1px dashed #1f2937}
+    #chart{width:100%;height:calc(100vh - 58px - 42px)}
+  </style>
+</head>
+<body>
+  <header>
+    <strong>VN Stocks</strong>
+    <div class="spacer"></div>
+    <input id="symbol" placeholder="Nhập mã (vd: FPT)" value="FPT" />
+    <button id="loadBtn" class="btn">Tải biểu đồ</button>
+    <div id="ranges">
+      <button class="btn" data-days="1">1D</button>
+      <button class="btn" data-days="5">1W</button>
+      <button class="btn" data-days="22">1M</button>
+      <button class="btn" data-days="66">3M</button>
+      <button class="btn" data-days="0">All</button>
+    </div>
+  </header>
+  <div id="status">Sẵn sàng.</div>
+  <div id="chart"></div>
+
+  <script>
+    function unixToDateStr(sec){
+      const d=new Date(Number(sec)*1000);
+      const y=d.getUTCFullYear(); const m=String(d.getUTCMonth()+1).padStart(2,'0'); const day=String(d.getUTCDate()).padStart(2,'0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function mapQuoteToSeries(q){
+      const {o,h,l,c,v,t}=q;
+      const n=Math.min(o?.length||0,h?.length||0,l?.length||0,c?.length||0,v?.length||0,t?.length||0);
+      const candles=new Array(n), volumes=new Array(n);
+      for(let i=0;i<n;i++){
+        const open=+o[i], high=+h[i], low=+l[i], close=+c[i], vol=+v[i], time=+t[i];
+        candles[i]={time,open,high,low,close};
+        volumes[i]={time,value:vol,color:close>=open?'#16a34a':'#dc2626'};
+      }
+      return {candles,volumes};
+    }
+
+    let chart,candleSeries,volumeSeries;
+    let originalCandles=[], originalVolumes=[];
+
+    function initChart(){
+      if (chart) return;
+      if (!window.LightweightCharts || !LightweightCharts.createChart){
+        throw new Error('LightweightCharts chưa load.');
+      }
+      chart=LightweightCharts.createChart(document.getElementById('chart'),{
+        autoSize:true,
+        layout:{background:{color:'#0f172a'},textColor:'#cbd5e1'},
+        grid:{vertLines:{color:'#1f2937'},horzLines:{color:'#1f2937'}},
+        rightPriceScale:{borderVisible:false},
+        timeScale:{rightOffset:8,secondsVisible:false,timeVisible:true},
+        crosshair:{mode:1},
+      });
+
+      candleSeries=chart.addCandlestickSeries({
+        upColor:'#16a34a', downColor:'#dc2626',
+        borderUpColor:'#16a34a', borderDownColor:'#dc2626',
+        wickUpColor:'#16a34a', wickDownColor:'#dc2626',
+      });
+
+      volumeSeries=chart.addHistogramSeries({
+        priceFormat:{type:'volume'},
+        priceScaleId:'',
+        scaleMargins:{top:0.8,bottom:0},
+      });
+      chart.priceScale('').applyOptions({scaleMargins:{top:0.8,bottom:0}});
+    }
+
+    function applyRangeByDays(days){
+      // days = 0 -> full
+      const status=document.getElementById('status');
+      if(!originalCandles.length){ status.textContent='Chưa có dữ liệu để lọc.'; return; }
+
+      let c = originalCandles;
+      let v = originalVolumes;
+
+      if (days && days > 0){
+        c = originalCandles.slice(-days);
+        v = originalVolumes.slice(-days);
+      }
+
+      candleSeries.setData(c);
+      volumeSeries.setData(v);
+
+      if (c.length){
+        chart.timeScale().setVisibleRange({ from: c[0].time, to: c[c.length-1].time });
+        const first=unixToDateStr(c[0].time);
+        const last=unixToDateStr(c[c.length-1].time);
+        status.textContent=`Hiển thị ${c.length} phiên (${first} → ${last}).`;
+      }
+      // toggle active class
+      for (const btn of document.querySelectorAll('#ranges .btn')) btn.classList.remove('active');
+      const active = document.querySelector(`#ranges .btn[data-days="${days}"]`);
+      if (active) active.classList.add('active');
+    }
+
+    async function load(symbol){
+      const status=document.getElementById('status');
+      status.textContent=`Đang tải ${symbol}...`;
+      try{
+        initChart();
+
+        const res=await fetch(`/api/stocks/history/${encodeURIComponent(symbol)}`);
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload=await res.json();
+
+        if(!payload?.success || !Array.isArray(payload.quote) || !payload.quote.length){
+          throw new Error('Không có dữ liệu trả về');
+        }
+        const q=payload.quote[0];
+        const {candles,volumes}=mapQuoteToSeries(q);
+        if(!candles.length) throw new Error('Dữ liệu rỗng');
+
+        // lưu bản đầy đủ
+        originalCandles = candles;
+        originalVolumes = volumes;
+
+        // mặc định hiển thị 3 tháng ~ 66 phiên
+        applyRangeByDays(66);
+
+        const first=unixToDateStr(candles[0].time);
+        const last=unixToDateStr(candles[candles.length-1].time);
+        status.textContent=`Đã tải ${candles.length} phiên cho ${symbol} (toàn bộ: ${first} → ${last}). Đang hiển thị 3M.`;
+
+      }catch(err){
+        console.error('Chart error:',err);
+        status.textContent=`Lỗi: ${err.message}`;
+        alert('Không thể tải biểu đồ. Xem console để biết chi tiết.');
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', ()=>{
+      const btn=document.getElementById('loadBtn');
+      const sym=document.getElementById('symbol');
+      btn.addEventListener('click', ()=> {
+        const s=(sym.value||'').trim().toUpperCase();
+        if(!s) return alert('Nhập mã cổ phiếu');
+        load(s);
+      });
+
+      // nút khung thời gian
+      document.getElementById('ranges').addEventListener('click', (e)=>{
+        const b = e.target.closest('button[data-days]');
+        if(!b) return;
+        const days = Number(b.dataset.days);
+        applyRangeByDays(days);
+      });
+
+      const param=new URLSearchParams(location.search).get('symbol')||'FPT';
+      sym.value=param.toUpperCase();
+      load(sym.value);
+    });
+
+    window.addEventListener('resize', ()=>{ if(chart) chart.applyOptions({autoSize:true}); });
+  </script>
+</body>
+</html>
