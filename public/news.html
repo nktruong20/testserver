@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tin tức chứng khoán</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f5f5f5;
+    }
+    h1 {
+      color: #222;
+    }
+    #controls {
+      margin-bottom: 15px;
+    }
+    input, select, button {
+      padding: 6px 10px;
+      margin-right: 5px;
+      font-size: 14px;
+    }
+    #newsList {
+      margin-top: 20px;
+    }
+    .news-item {
+      background: #fff;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .news-item h3 {
+      margin: 0 0 6px;
+      font-size: 18px;
+    }
+    .news-item a {
+      text-decoration: none;
+      color: #0066cc;
+    }
+    .news-item a:hover {
+      text-decoration: underline;
+    }
+    .source {
+      font-size: 13px;
+      color: #777;
+    }
+  </style>
+</head>
+<body>
+  <h1>Tin tức chứng khoán</h1>
+
+  <div id="controls">
+    <input type="text" id="symbolInput" placeholder="Nhập mã cổ phiếu (VD: HPG)" />
+    <select id="timeFilter">
+      <option value="">Tất cả</option>
+      <option value="1d">24h qua</option>
+      <option value="7d">7 ngày qua</option>
+    </select>
+    <button onclick="loadNews()">Tìm</button>
+  </div>
+
+  <div id="newsList">Nhập mã cổ phiếu để xem tin tức...</div>
+
+  <script>
+    async function loadNews() {
+      const symbol = document.getElementById("symbolInput").value.trim();
+      const range = document.getElementById("timeFilter").value;
+
+      if (!symbol) {
+        alert("Vui lòng nhập mã cổ phiếu");
+        return;
+      }
+
+      try {
+        const url = `/api/news/${symbol}${range ? `?range=${range}` : ""}`;
+        const res = await fetch(url);
+        const xmlText = await res.text();
+
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, "application/xml");
+
+        const items = xmlDoc.getElementsByTagName("item");
+        let html = "";
+
+        for (let i = 0; i < items.length; i++) {
+          const title = items[i].getElementsByTagName("title")[0]?.textContent || "";
+          const link = items[i].getElementsByTagName("link")[0]?.textContent || "#";
+          const pubDate = items[i].getElementsByTagName("pubDate")[0]?.textContent || "";
+          const source = items[i].getElementsByTagName("source")[0]?.textContent || "";
+
+          html += `
+            <div class="news-item">
+              <h3><a href="${link}" target="_blank">${title}</a></h3>
+              <div class="source">${source} - ${pubDate}</div>
+            </div>
+          `;
+        }
+
+        document.getElementById("newsList").innerHTML = html || "Không có tin tức nào.";
+      } catch (err) {
+        console.error(err);
+        document.getElementById("newsList").innerHTML = "Lỗi tải tin tức.";
+      }
+    }
+  </script>
+</body>
+</html>
